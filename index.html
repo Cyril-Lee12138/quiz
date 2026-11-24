@@ -229,7 +229,8 @@ body{overscroll-behavior-y:contain;-webkit-font-smoothing:antialiased}
     <div class="stat">
       <h3>说明</h3>
       <p>题库共 <b id="hTotal2"></b> 道（其中案例 47 个、案例小题 188 道），答案来自原 PDF 的黄色标注；原题库有 2 处印刷缺陷（个别题只印了 A/B 两个选项、一处把两个选项都标成 C），已按选项顺序重新编号，答案按标黄位置对应，不影响作答。</p>
-      <p>所有答题记录存在浏览器本地（换浏览器或清缓存会丢），不需要联网。</p>
+      <p>所有答题记录存在浏览器本地（换浏览器或清缓存会丢），不需要联网。关掉再打开会停在上一题，不会从头开始。</p>
+      <p class="mini" id="appVer">版本 v2 · 离线缓存 / 记住刷到哪一题 / 进度可备份</p>
     </div>
   </section>
 </div>
@@ -311,15 +312,16 @@ load();
   $('btnExam').onclick = ()=>{ $('examSetup').classList.add('on'); };
   $('examCancel').onclick = ()=>{ $('examSetup').classList.remove('on'); };
   $('examGo').onclick = ()=>{ $('examSetup').classList.remove('on'); startExam(+$('examN').value, +$('examSec').value); };
-  $('resClose').onclick = ()=>{ $('resultBox').classList.remove('on'); refreshPool(); };
-  $('resWrong').onclick = ()=>{ $('resultBox').classList.remove('on'); setTab('wrong'); };  $('btnReset').onclick = ()=>{ if(confirm('清空全部答题记录和错题本？此操作不可撤销。')){ R={}; save(); updateBadge(); render(); renderStats(); renderWrong(); } };
+  $('resClose').onclick = ()=>{ $('resultBox').classList.remove('on'); S.skipPosSave = 1; refreshPool(); };
+  $('resWrong').onclick = ()=>{ $('resultBox').classList.remove('on'); setTab('wrong'); };  $('btnReset').onclick = ()=>{ if(confirm('清空全部答题记录和错题本？此操作不可撤销。')){ R={}; save(); clearPos(); updateBadge(); render(); renderStats(); renderWrong(); } };
   $('btnExport').onclick = exportWrong;
   $('btnClearWrong').onclick = ()=>{ if(confirm('清空错题本（答题记录保留做过的题）？')){ Object.keys(R).forEach(k=>{ if(R[k]===0) delete R[k]; }); save(); updateBadge(); renderWrong(); render(); } };
   document.querySelectorAll('nav button').forEach(b=> b.onclick = ()=> setTab(b.dataset.tab));
   $('card').addEventListener('click', onCardClick);
   document.addEventListener('keydown', onKey);
 
-  refreshPool();
+  if(restorePos()){ render(); $('hint').textContent += ' · 已回到上次刷到的位置'; }
+  else refreshPool();
   updateBadge(); renderStats(); renderWrong();
   setInterval(()=>{ if(S.exam && !S.exam.done) renderExamTop(); }, 1000);
 })();
@@ -341,13 +343,14 @@ function refreshPool(){
   let list = UNITS.filter(matchUnit);
   if(S.shuffle) list = shuffle(list.slice());
   S.pool = list; S.i = 0; S.picks={}; S.show={};
+  savePosPool();
   render();
 }
 function go(d){
   if(!S.pool.length) return;
   const n = S.i + d;
   if(n<0 || n>=S.pool.length) return;
-  S.i = n; render();
+  S.i = n; savePosIdx(); render();
 }
 
 /* ---------- 渲染 ---------- */
@@ -663,6 +666,56 @@ function onKey(e){
   }
   if(e.key==='ArrowLeft') go(-1);
   if(e.key==='ArrowRight') go(1);
+}
+
+/* ---------- 记住刷到哪一题（新增） ---------- */
+function savePosPool(){
+  if(S.exam || S.skipPosSave){ S.skipPosSave = 0; return; }
+  try{
+    localStorage.setItem('jtaq_pos_v1', JSON.stringify({
+      v: 2, t: Date.now(),
+      f: {mode:S.mode, sec:S.sec, typ:S.typ, dif:S.dif, kw:S.kw, shuffle:S.shuffle, onlyWrong:S.onlyWrong},
+      order: S.pool.map(u=>u.uid),
+      i: S.i
+    }));
+  }catch(e){}
+}
+function savePosIdx(){
+  if(S.exam) return;
+  try{ localStorage.setItem('jtaq_pos_i1', String(S.i)); }catch(e){}
+}
+function restorePos(){
+  let p = null;
+  try{ p = JSON.parse(localStorage.getItem('jtaq_pos_v1')||'null'); }catch(e){ return false; }
+  if(!p || !p.order || !p.order.length) return false;
+  const f = p.f || {};
+  S.mode = f.mode === 'read' ? 'read' : 'do';
+  S.sec = (typeof f.sec === 'number') ? f.sec : -1;
+  S.typ = f.typ || 'all';
+  S.dif = f.dif || 'all';
+  S.kw = f.kw || '';
+  S.shuffle = !!f.shuffle;
+  S.onlyWrong = !!f.onlyWrong;
+  $('mode').value = S.mode;
+  $('sec').value = String(S.sec);
+  $('typ').value = S.typ;
+  $('dif').value = S.dif;
+  $('kw').value = S.kw;
+  $('shuffle').checked = S.shuffle;
+  $('onlyWrong').checked = S.onlyWrong;
+  const map = new Map();
+  UNITS.forEach(u=>map.set(u.uid, u));
+  const pool = p.order.map(id=>map.get(id)).filter(Boolean);
+  if(!pool.length) return false;
+  S.pool = pool;
+  let i = parseInt(localStorage.getItem('jtaq_pos_i1'), 10);
+  if(!(i >= 0)) i = p.i | 0;
+  S.i = Math.min(Math.max(0, i), pool.length - 1);
+  S.picks = {}; S.show = {};
+  return true;
+}
+function clearPos(){
+  try{ localStorage.removeItem('jtaq_pos_v1'); localStorage.removeItem('jtaq_pos_i1'); }catch(e){}
 }
 
 /* ---------- iPhone 适配：存储自检 / 进度备份 / 离线（新增） ---------- */
